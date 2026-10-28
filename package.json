@@ -1,1 +1,1 @@
-{"name":"forwarder-core","version":"0.0.1","type":"module","private":true,"scripts":{"test":"node test/core.test.mjs && node test/recon.test.mjs"}}
+{"name":"forwarder-core","version":"0.0.1","type":"module","private":true,"scripts":{"test":"node test/core.test.mjs && node test/recon.test.mjs && node test/docs.test.mjs"}}

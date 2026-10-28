@@ -1,0 +1,17 @@
+import assert from 'node:assert/strict';
+import * as d from '../src/docs.js';
+let n=0; const t=(name,f)=>{ try{f();n++;console.log('ok',name);}catch(e){console.error('FAIL',name,e.message);process.exitCode=1;} };
+const T0=1_700_000_000_000, DAY=d.DAY;
+const mk=()=>{const db={cases:[]};d.newCase(db,{ref:'CFS-1',customer:'Acme',now:T0});return db;};
+t('requires ref and customer',()=>{assert.throws(()=>d.newCase({cases:[]},{ref:'',customer:'x'}));assert.throws(()=>d.newCase({cases:[]},{ref:'x',customer:''}));});
+t('duplicate ref',()=>{const db=mk();assert.throws(()=>d.newCase(db,{ref:'cfs-1',customer:'B'}));});
+t('duplicate doc names',()=>assert.throws(()=>d.newCase({cases:[]},{ref:'a',customer:'b',template:['X','x']})));
+t('not ready until all received',()=>{const db=mk();const c=db.cases[0];for(const x of ['Clearance document','Delivery order','Gate pass'])d.receive(db,'CFS-1',x,T0+DAY);let s=d.status(c);assert.equal(s.ready,false);assert.deepEqual(s.outstanding,['Payment proof']);d.receive(db,'CFS-1','Payment proof',T0+2*DAY);assert.equal(d.status(c).ready,true);});
+t('reject needs reason and keeps outstanding',()=>{const db=mk();assert.throws(()=>d.reject(db,'CFS-1','Gate pass',''));d.reject(db,'CFS-1','Gate pass','Unsigned');assert.equal(d.getDoc(db,'CFS-1','Gate pass').state,'rejected');assert.ok(d.status(db.cases[0]).outstanding.includes('Gate pass'));});
+t('cannot receive twice',()=>{const db=mk();d.receive(db,'CFS-1','Gate pass');assert.throws(()=>d.receive(db,'CFS-1','Gate pass'));});
+t('chase list ordering and threshold',()=>{const db=mk();d.newCase(db,{ref:'CFS-2',customer:'B',now:T0+3*DAY});const now=T0+4*DAY;const l=d.chaseList(db,{now});assert.equal(l[0].ref,'CFS-1');assert.equal(l[0].daysSince,4);assert.equal(l.filter(x=>x.ref==='CFS-2')[0].daysSince,1);assert.equal(d.chaseList(db,{now:T0+DAY/2}).length,0);});
+t('reminder resets clock and counts',()=>{const db=mk();d.remind(db,'CFS-1','Gate pass',T0+3*DAY);const l=d.chaseList(db,{now:T0+4*DAY,afterDays:1}).filter(x=>x.doc==='Gate pass')[0];assert.equal(l.daysSince,1);assert.equal(l.reminders,1);});
+t('received docs leave chase list',()=>{const db=mk();d.receive(db,'CFS-1','Gate pass',T0);assert.ok(!d.chaseList(db,{now:T0+9*DAY}).some(x=>x.doc==='Gate pass'));});
+t('reminder text lists docs',()=>{const db=mk();const txt=d.reminderText(db.cases[0],['Gate pass','Payment proof']);assert.match(txt,/CFS-1/);assert.match(txt,/Gate pass, Payment proof/);});
+t('time to complete',()=>{const db=mk();for(const x of db.cases[0].docs)d.receive(db,'CFS-1',x.name,T0+2*DAY);assert.equal(d.releasedWithin(db.cases[0]),2*DAY);});
+console.log(n,'passed');

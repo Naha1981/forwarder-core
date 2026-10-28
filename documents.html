@@ -1,0 +1,41 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Release documents - Forwarder Core</title>
+<style>
+body{font:14px system-ui,sans-serif;margin:0;background:#f4f6f8;color:#1b2430}
+header{background:#12324a;color:#fff;padding:10px 16px}header a{color:#9fd8ff;margin-left:12px}
+main{padding:16px;max-width:1000px;margin:auto}.card{background:#fff;border:1px solid #d8dee4;border-radius:6px;padding:12px;margin-bottom:12px}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:5px;border-bottom:1px solid #eef1f4}
+button{background:#12324a;color:#fff;border:0;border-radius:4px;padding:4px 10px;cursor:pointer;margin:1px}
+input,textarea{font:inherit;padding:4px}.note{font-size:12px;color:#5b6773}.err{background:#fde8e8;color:#8a1c1c;padding:8px;border-radius:4px;margin-bottom:10px}
+.tag{display:inline-block;border-radius:10px;padding:1px 8px;font-size:12px}.missing{background:#fff3d6}.received{background:#dff3e3}.rejected{background:#fde8e8}.ready{background:#dff3e3}
+pre{background:#f0f3f6;padding:8px;white-space:pre-wrap}
+</style></head><body>
+<header><b>Release document checklist and chase list</b><a href="index.html">Back to Forwarder Core</a></header>
+<main><div id="err"></div>
+<p class="note">Tracks which documents are in before a shipment can be released or delivered. The default document list is only an example from a public Reddit post (3 documents plus proof of payment). Set your own list per case. Stored in this browser. Customers cannot upload here yet: that needs a server.</p>
+<div class="card"><b>New case</b> <input id="ref" placeholder="Shipment ref"> <input id="cust" placeholder="Customer"><br>
+Documents (one per line)<br><textarea id="tpl" rows="4" cols="30"></textarea> <button id="add">Create case</button> <button id="demo">Load sample</button> <button id="wipe">Delete all</button></div>
+<div id="chase"></div><div id="cases"></div></main>
+<script type="module">
+import * as d from './src/docs.js';
+const KEY='fwdcore.docs.v1'; let db=JSON.parse(localStorage.getItem(KEY)||'null')||{cases:[]};
+const $=s=>document.querySelector(s); const esc=s=>String(s??'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+$('#tpl').value=d.DEFAULT_TEMPLATE.join('\n');
+const run=f=>{try{f();$('#err').innerHTML='';localStorage.setItem(KEY,JSON.stringify(db));}catch(e){$('#err').innerHTML='<div class="err">'+esc(e.message)+'</div>';}render();};
+window.A={
+ recv:(r,n)=>run(()=>d.receive(db,r,n)), rej:(r,n)=>run(()=>d.reject(db,r,n,prompt('Reason for rejecting '+n+'?')||'')),
+ rem:(r,n)=>run(()=>d.remind(db,r,n)), msg:(r)=>{const c=db.cases.find(x=>x.ref===r);const o=d.status(c).outstanding;$('#msg').textContent=d.reminderText(c,o);}
+};
+$('#add').onclick=()=>run(()=>d.newCase(db,{ref:$('#ref').value,customer:$('#cust').value,template:$('#tpl').value.split('\n').map(x=>x.trim()).filter(Boolean)}));
+$('#wipe').onclick=()=>{if(confirm('Delete all cases?')){db={cases:[]};localStorage.setItem(KEY,'{"cases":[]}');render();}};
+$('#demo').onclick=()=>{db={cases:[]};const n=Date.now(),D=d.DAY;d.newCase(db,{ref:'CFS-1001 (demo)',customer:'Acme Imports',now:n-3*D});d.newCase(db,{ref:'CFS-1002 (demo)',customer:'Beta Foods',now:n-1*D});d.newCase(db,{ref:'CFS-1003 (demo)',customer:'Gamma Steel',now:n-5*D});
+ d.receive(db,'CFS-1001 (demo)','Clearance document',n-2*D);d.receive(db,'CFS-1001 (demo)','Delivery order',n-2*D);d.reject(db,'CFS-1001 (demo)','Gate pass','Not signed');
+ for(const x of db.cases[2].docs)d.receive(db,db.cases[2].ref,x.name,n-D);d.remind(db,'CFS-1002 (demo)','Payment proof',n-D/2);
+ localStorage.setItem(KEY,JSON.stringify(db));render();};
+function render(){
+ const ch=d.chaseList(db);
+ $('#chase').innerHTML=`<div class="card"><b>Chase list (${ch.length})</b> <span class="note">outstanding documents, oldest first, one day or more since request or last reminder</span><table><tr><th>Case<th>Customer<th>Document<th>State<th>Days<th>Reminders</tr>${ch.map(x=>`<tr><td>${esc(x.ref)}<td>${esc(x.customer)}<td>${esc(x.doc)}<td><span class="tag ${x.state}">${x.state}</span> ${esc(x.note)}<td>${x.daysSince}<td>${x.reminders}</tr>`).join('')||'<tr><td colspan=6>Nothing to chase.</tr>'}</table><pre id="msg" class="note">Click "Reminder text" on a case to draft a message (you send it yourself).</pre></div>`;
+ $('#cases').innerHTML=db.cases.map(c=>{const s=d.status(c);return `<div class="card"><b>${esc(c.ref)}</b> ${esc(c.customer)} <span class="tag ${s.ready?'ready':'missing'}">${s.ready?'READY TO RELEASE':s.received+' of '+s.total+' received'}</span> ${s.ready?'':`<button onclick="A.msg('${esc(c.ref)}')">Reminder text</button>`}<table>${c.docs.map(x=>`<tr><td>${esc(x.name)}<td><span class="tag ${x.state}">${x.state}</span> ${esc(x.note)}<td>${x.state==='received'?'':`<button onclick="A.recv('${esc(c.ref)}','${esc(x.name)}')">Received</button><button onclick="A.rej('${esc(c.ref)}','${esc(x.name)}')">Reject</button><button onclick="A.rem('${esc(c.ref)}','${esc(x.name)}')">Log reminder</button>`}</tr>`).join('')}</table></div>`}).join('');
+}
+if(location.hash==='#demo') $('#demo').click(); else render();
+</script></body></html>
