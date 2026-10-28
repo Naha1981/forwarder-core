@@ -1,0 +1,53 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Invoice reconciliation - Forwarder Core</title>
+<style>
+body{font:14px system-ui,sans-serif;margin:0;background:#f4f6f8;color:#1b2430}
+header{background:#12324a;color:#fff;padding:10px 16px}header a{color:#9fd8ff;margin-left:12px}
+main{padding:16px;max-width:1000px;margin:auto}.card{background:#fff;border:1px solid #d8dee4;border-radius:6px;padding:12px;margin-bottom:12px}
+textarea{width:100%;height:120px;font:12px monospace;box-sizing:border-box}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:5px;border-bottom:1px solid #eef1f4}
+td.n,th.n{text-align:right}button{background:#12324a;color:#fff;border:0;border-radius:4px;padding:6px 12px;cursor:pointer;margin:2px}
+.note{font-size:12px;color:#5b6773}.err{background:#fde8e8;color:#8a1c1c;padding:8px;border-radius:4px}
+.tag{display:inline-block;border-radius:10px;padding:1px 8px;font-size:12px;background:#e3eef7}.bad{background:#fde8e8}.warn{background:#fff3d6}
+label{margin-right:12px}input,select{font:inherit;padding:3px}
+</style></head><body>
+<header><b>Invoice reconciliation and per-customer fee split</b><a href="index.html">Back to Forwarder Core</a></header>
+<main>
+<p class="note">Paste or load two CSV files. Nothing leaves your browser. The vendor invoice layout is not known to this tool, so you pick the columns. Sample data below is synthetic. Findings are checks to review, not proof of an overcharge.</p>
+<div class="card"><b>1. Vendor invoice lines (CSV)</b> <input type="file" id="f1" accept=".csv,text/csv"><textarea id="inv"></textarea>
+Columns: job ref <select id="m_job"></select> fee type <select id="m_type"></select> amount <select id="m_amount"></select></div>
+<div class="card"><b>2. Your own job list (CSV)</b> <input type="file" id="f2" accept=".csv,text/csv"><textarea id="jobs"></textarea>
+Columns: job ref <select id="j_job"></select> customer <select id="j_customer"></select></div>
+<div class="card"><b>3. Checks</b><br><label>Invoice total you read off the invoice <input id="tot" size="10" placeholder="optional"></label>
+<label>Expected fee per job ("Type=amount" per line)<br><textarea id="rates" style="height:50px;width:260px" placeholder="Automation=10.00"></textarea></label>
+<label>Markup % <input id="mk" size="4" value="0"></label><label><input type="checkbox" id="spread" checked> spread adjustment lines across customers by job count</label>
+<br><button id="run">Reconcile</button> <button id="dl">Download customer split CSV</button> <button id="demo">Load sample data</button></div>
+<div id="out"></div></main>
+<script type="module">
+import * as r from './src/recon.js';
+const $=s=>document.querySelector(s); const esc=s=>String(s??'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+const SAMPLE_INV='Job,Fee type,Amount\nS00101,Automation fee,10.00\nS00101,Automation fee,10.00\nS00102,Automation fee,10.00\nS00103,Automation fee,12.00\nS00109,Automation fee,10.00\nS00106,Automation fee,10.00\nS00107,Automation fee,10.00\nX,Transitional Pricing Protection,30.00';
+const SAMPLE_JOBS='Job ref,Customer\nS00101,Acme Imports\nS00102,Acme Imports\nS00103,Beta Foods\nS00104,Beta Foods\nS00106,Gamma Steel\nS00107,Gamma Steel';
+let last=null;
+function headers(t){ const x=r.parseCsv(t); return x.length?Object.keys(x[0]):[]; }
+function fill(sel,h,guess){ const s=$(sel),cur=s.value; s.innerHTML=h.map(x=>`<option>${esc(x)}</option>`).join(''); const g=h.find(x=>guess.test(x)); s.value=h.includes(cur)?cur:(g||h[0]||''); }
+function sync(){ const a=headers($('#inv').value),b=headers($('#jobs').value);
+ fill('#m_job',a,/job|ref|file/i);fill('#m_type',a,/type|fee|desc|charge|item/i);fill('#m_amount',a,/amount|amt|total|price|value/i);
+ fill('#j_job',b,/job|ref|file/i);fill('#j_customer',b,/cust|client|shipper|consignee/i); }
+function load(inp,ta){ $(inp).onchange=async e=>{ $(ta).value=await e.target.files[0].text(); sync(); }; }
+load('#f1','#inv');load('#f2','#jobs');$('#inv').oninput=sync;$('#jobs').oninput=sync;
+$('#demo').onclick=()=>{$('#inv').value=SAMPLE_INV;$('#jobs').value=SAMPLE_JOBS;$('#tot').value='82.00';$('#rates').value='Automation fee=10.00';sync();$('#run').click();};
+$('#run').onclick=()=>{ try{
+ const lines=r.mapInvoice(r.parseCsv($('#inv').value),{job:$('#m_job').value,type:$('#m_type').value,amount:$('#m_amount').value});
+ const jobs=r.mapJobs(r.parseCsv($('#jobs').value),{job:$('#j_job').value,customer:$('#j_customer').value});
+ const rates={}; $('#rates').value.split('\n').forEach(l=>{const i=l.lastIndexOf('=');if(i>0)rates[l.slice(0,i).trim()]=l.slice(i+1).trim();});
+ const res=r.reconcile(lines,jobs,{invoiceTotal:$('#tot').value.trim()||null,expectedRates:rates,markupPct:Number($('#mk').value)||0,spreadAdjustments:$('#spread').checked}); last=res; show(res);
+ }catch(e){ $('#out').innerHTML='<div class="err">'+esc(e.message)+'</div>'; } };
+$('#dl').onclick=()=>{ if(!last) return; const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([r.splitCsv(last.split)],{type:'text/csv'})); a.download='customer-fee-split.csv'; a.click(); };
+function show(x){ const T=x.totals, F=r.fmt;
+ const sev={RATE_DIFFERS_FROM_EXPECTED:'bad',POSSIBLE_DUPLICATE:'bad',TOTAL_MISMATCH:'bad',BILLED_NOT_IN_YOUR_JOBS:'bad',JOB_CUSTOMER_CONFLICT:'warn',YOUR_JOB_NOT_BILLED:'warn'};
+ $('#out').innerHTML=`<div class="card"><b>Totals</b>: ${T.lines} lines. Fee lines ${F(T.feeTotal)}, adjustment lines ${F(T.adjTotal)}, all lines ${F(T.lineTotal)}. Fees on jobs not in your list: ${F(T.unassigned)}.</div>
+<div class="card"><b>Findings (${x.findings.length})</b><table><tr><th>Check<th>Job<th>Detail<th class="n">Amount</tr>${x.findings.map(f=>`<tr><td><span class="tag ${sev[f.code]||''}">${f.code}</span><td>${esc(f.job)}<td>${esc(f.detail)}<td class="n">${f.amount?F(f.amount):''}</tr>`).join('')||'<tr><td colspan=4>No findings.</tr>'}</table></div>
+<div class="card"><b>Adjustment lines on the invoice</b> (for example Transitional Pricing Protection): ${x.adjustmentLines.map(l=>esc(l.type)+' '+F(l.amount)+' (line '+l.line+')').join('; ')||'none'}</div>
+<div class="card"><b>Per-customer fee split</b><table><tr><th>Customer<th class="n">Jobs<th class="n">Fees<th class="n">Adjustments<th class="n">Cost<th class="n">Charge</tr>${x.split.map(s=>`<tr><td>${esc(s.customer)}<td class="n">${s.jobs}<td class="n">${F(s.fees)}<td class="n">${F(s.adjustments)}<td class="n">${F(s.cost)}<td class="n">${F(s.charge)}</tr>`).join('')}</table><p class="note">Unallocated adjustments: ${F(T.adjUnallocated)}. Fees on jobs not in your list are excluded from customers until you add those jobs.</p></div>`; }
+if(location.hash==='#demo') $('#demo').click(); else sync();
+</script></body></html>
