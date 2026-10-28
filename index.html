@@ -1,0 +1,57 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Forwarder Core (working name)</title>
+<style>
+body{font:14px system-ui,sans-serif;margin:0;background:#f4f6f8;color:#1b2430}
+header{background:#12324a;color:#fff;padding:10px 16px;display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+header b{font-size:16px} nav button{background:none;border:0;color:#cfe3f1;padding:6px 10px;cursor:pointer;font:inherit}
+nav button.on{color:#fff;border-bottom:2px solid #5cc8ff}
+main{padding:16px;max-width:1000px;margin:auto}
+.card{background:#fff;border:1px solid #d8dee4;border-radius:6px;padding:12px;margin-bottom:12px}
+table{width:100%;border-collapse:collapse} th,td{text-align:left;padding:6px;border-bottom:1px solid #eef1f4}
+input,select,button.act{font:inherit;padding:5px 8px;margin:2px} button.act{background:#12324a;color:#fff;border:0;border-radius:4px;cursor:pointer}
+.err{background:#fde8e8;color:#8a1c1c;padding:8px;border-radius:4px;margin-bottom:10px}
+.tag{display:inline-block;background:#e3eef7;border-radius:10px;padding:1px 8px;font-size:12px}
+.note{font-size:12px;color:#5b6773}
+</style></head><body>
+<header><b>Forwarder Core</b><nav id="nav"></nav><span class="note" style="color:#9fb8cc">Prototype. Synthetic data only. Stored in this browser.</span></header>
+<main><div id="err"></div><div id="view"></div>
+<p class="note">Concepts (organisation, quote, booking, shipment, container, milestone, job costing) are rebuilt from public descriptions of freight forwarding systems. Not a copy of any vendor product. No customer data.</p></main>
+<script type="module">
+import * as c from './src/core.js';
+const KEY='fwdcore.v1'; let db=JSON.parse(localStorage.getItem(KEY)||'null')||c.emptyDb(); let tab='Dashboard', sel=null;
+const save=()=>localStorage.setItem(KEY,JSON.stringify(db));
+const $=s=>document.querySelector(s); const esc=s=>String(s??'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));
+const org=id=>db.orgs.find(o=>o.id===id)?.name||'-';
+function run(f){ try{ f(); $('#err').innerHTML=''; save(); }catch(e){ $('#err').innerHTML='<div class="err">'+esc(e.message)+'</div>'; } render(); }
+window.A={
+ org(){run(()=>c.addOrg(db,{name:$('#on').value,roles:[$('#or').value],country:$('#oc').value||'ZA'}))},
+ quote(){run(()=>{const q=c.addQuote(db,{customerId:$('#qc').value,origin:$('#qo').value,destination:$('#qd').value,mode:$('#qm').value,lines:[{desc:$('#ql').value||'Freight',qty:+$('#qq').value,unit:+$('#qu').value,cost:+$('#qk').value}]});sel=q.id})},
+ qs(id,s){run(()=>c.setQuoteState(db,id,s))},
+ book(id){run(()=>c.bookFromQuote(db,id,{carrierId:$('#cr'+id)?.value||undefined}))},
+ conf(id){run(()=>c.confirmBooking(db,id,$('#ref'+id).value))},
+ ship(id){run(()=>{c.shipmentFromBooking(db,id)})},
+ cont(id){run(()=>c.addContainer(db,id,$('#cn'+id).value))},
+ ms(id,m){run(()=>c.addMilestone(db,id,m))},
+ cost(id){run(()=>c.addCost(db,id,{supplierId:$('#cs'+id).value,desc:$('#cd'+id).value,amount:$('#ca'+id).value}))},
+ close(id){run(()=>c.closeShipment(db,id))},
+ tab(t){tab=t;render()}, reset(){if(confirm('Delete all data in this browser?')){db=c.emptyDb();save();render();}}
+};
+const opts=(role)=>db.orgs.filter(o=>!role||o.roles.includes(role)).map(o=>`<option value="${o.id}">${esc(o.name)}</option>`).join('');
+const views={
+Dashboard(){return `<div class="card"><b>${db.orgs.length}</b> organisations, <b>${db.quotes.length}</b> quotes, <b>${db.bookings.length}</b> bookings, <b>${db.shipments.length}</b> shipments. <button class="act" onclick="A.reset()">Reset data</button></div>
+<div class="card"><b>Flow</b>: Organisation, Quote (draft, sent, accepted), Booking (requested, confirmed with carrier ref), Shipment (containers, milestones, job costs, profit, close).</div>`},
+Organisations(){return `<div class="card"><input id="on" placeholder="Name"><select id="or">${c.ORG_ROLES.map(r=>`<option>${r}</option>`).join('')}</select><input id="oc" placeholder="Country" size="3" value="ZA"><button class="act" onclick="A.org()">Add</button></div>
+<div class="card"><table><tr><th>ID<th>Name<th>Role<th>Country</tr>${db.orgs.map(o=>`<tr><td>${o.id}<td>${esc(o.name)}<td>${o.roles.join(', ')}<td>${o.country}</tr>`).join('')}</table></div>`},
+Quotes(){return `<div class="card"><select id="qc">${opts('customer')}</select><input id="qo" placeholder="Origin (CNSHA)" size="8"><input id="qd" placeholder="Dest (ZADUR)" size="8"><select id="qm"><option>sea<option>air<option>road</select><br><input id="ql" placeholder="Line" value="Freight" size="10"><input id="qq" type="number" value="1" style="width:55px"><input id="qu" type="number" placeholder="Sell each" style="width:90px"><input id="qk" type="number" placeholder="Cost each" style="width:90px"><button class="act" onclick="A.quote()">Create quote</button></div>
+<div class="card"><table><tr><th>ID<th>Customer<th>Lane<th>Sell<th>Margin<th>State<th></tr>${db.quotes.map(q=>{const t=c.quoteTotals(q);const b=db.bookings.find(x=>x.quoteId===q.id&&x.state!=='cancelled');return `<tr><td>${q.id}<td>${esc(org(q.customerId))}<td>${esc(q.origin)} to ${esc(q.destination)}<td>${t.sell}<td>${t.margin} (${t.marginPct}%)<td><span class="tag">${q.state}</span><td>${q.state==='draft'?`<button class="act" onclick="A.qs('${q.id}','sent')">Send</button>`:''}${q.state==='sent'?`<button class="act" onclick="A.qs('${q.id}','accepted')">Accepted</button><button class="act" onclick="A.qs('${q.id}','rejected')">Rejected</button>`:''}${q.state==='accepted'&&!b?`<select id="cr${q.id}">${opts('carrier')}</select><button class="act" onclick="A.book('${q.id}')">Book</button>`:''}</tr>`}).join('')}</table></div>`},
+Bookings(){return `<div class="card"><table><tr><th>ID<th>Quote<th>Carrier<th>State<th>Carrier ref<th></tr>${db.bookings.map(b=>`<tr><td>${b.id}<td>${b.quoteId}<td>${esc(org(b.carrierId))}<td><span class="tag">${b.state}</span><td>${esc(b.carrierRef||'')}<td>${b.state==='requested'?`<input id="ref${b.id}" placeholder="Carrier ref"><button class="act" onclick="A.conf('${b.id}')">Confirm</button>`:''}${b.state==='confirmed'&&!db.shipments.some(s=>s.bookingId===b.id)?`<button class="act" onclick="A.ship('${b.id}')">Create shipment</button>`:''}</tr>`).join('')}</table></div>`},
+Shipments(){return db.shipments.map(s=>{const p=c.jobProfit(db,s.id);return `<div class="card"><b>${s.id}</b> ${esc(org(s.customerId))}, ${esc(s.origin)} to ${esc(s.destination)} <span class="tag">${s.state}</span>
+<p>Containers: ${s.containers.map(x=>x.no+' '+x.type).join(', ')||'none'} <input id="cn${s.id}" placeholder="CSQU3054383" size="13"><button class="act" onclick="A.cont('${s.id}')">Add container</button></p>
+<p>Milestones: ${s.milestones.map(m=>m.name).join(' > ')}<br>${c.MILESTONES.filter(m=>!s.milestones.some(x=>x.name===m)).slice(0,1).map(m=>`<button class="act" onclick="A.ms('${s.id}','${m}')">Record: ${m}</button>`).join('')}</p>
+<p>Costs: ${s.costs.map(x=>esc(org(x.supplierId))+' '+esc(x.desc)+' '+x.amount).join('; ')||'none'}<br><select id="cs${s.id}">${opts()}</select><input id="cd${s.id}" placeholder="Description" size="12"><input id="ca${s.id}" type="number" placeholder="Amount" style="width:90px"><button class="act" onclick="A.cost('${s.id}')">Add cost</button></p>
+<p>Revenue ${p.revenue}, cost ${p.cost}, <b>profit ${p.profit}</b> ${s.state==='delivered'?`<button class="act" onclick="A.close('${s.id}')">Close job</button>`:''}</p></div>`}).join('')||'<div class="card">No shipments yet.</div>'}
+};
+function render(){ $('#nav').innerHTML=Object.keys(views).map(t=>`<button class="${t===tab?'on':''}" onclick="A.tab('${t}')">${t}</button>`).join(''); $('#view').innerHTML=views[tab](); }
+if(location.hash.startsWith('#demo')){db=c.emptyDb();const cu=c.addOrg(db,{name:'Acme Imports (demo)'}),ca=c.addOrg(db,{name:'Sea Line (demo)',roles:['carrier']});const q=c.addQuote(db,{customerId:cu.id,origin:'CNSHA',destination:'ZADUR',lines:[{desc:'Freight',qty:1,unit:5000,cost:4000}]});c.setQuoteState(db,q.id,'sent');c.setQuoteState(db,q.id,'accepted');const b=c.bookFromQuote(db,q.id,{carrierId:ca.id});c.confirmBooking(db,b.id,'MSK123');const sh=c.shipmentFromBooking(db,b.id);c.addContainer(db,sh.id,'CSQU3054383');c.addMilestone(db,sh.id,'Cargo received');c.addCost(db,sh.id,{supplierId:ca.id,desc:'Ocean freight',amount:4200});tab=location.hash==='#demo-q'?'Quotes':'Shipments';}
+render();
+</script></body></html>
